@@ -315,11 +315,7 @@ function _M.get_statistics()
         return ngx.exit(500)
     end
 
-    local upst_name
-    local ser_addr
-    local upst_ser_table
     local status
-    local upst_data
     local store
 
     for zone, v in pairs( upstreams ) do
