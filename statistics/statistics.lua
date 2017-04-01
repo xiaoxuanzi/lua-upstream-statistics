@@ -1,5 +1,4 @@
 local json = require( "cjson" )
-local peers_status = require( "statistics.peers_status" )
 local util = require("statistics.util")
 
 local statistic_key = 'upstream-statistics'
@@ -173,37 +172,6 @@ local function fill_item(upst, data)
 
 end
 
-local function  pretty_upst_peers_status( upstreams_peers_status )
-
-    local upst_name
-    local ser_addr
-    local upst_ser_table
-    local health_status = {}
-    local status
-
-    for k, v in pairs( upstreams_peers_status ) do
-
-        upst_ser_table = util.split(k, '_')
-        upst_name, ser_addr = upst_ser_table[1], upst_ser_table[2]
-        status = health_status[ upst_name ]
-        if not status then
-            status = {}
-            health_status[ upst_name ] = status
-        end
-        status[ser_addr] = util.dupdict(v, true)
-
-        if status[ser_addr]['down'] then
-            status[ser_addr]['status'] = 'down'
-        else
-            status[ser_addr]['status'] = 'up'
-        end
-
-    end
-
-    return health_status
-
-end
-
 local function pretty_upst_peers_data(name, data, store)
 
     local upst_name
@@ -242,15 +210,11 @@ function _M.log()
     end
 
     local upstream_addr = ngx.var.upstream_addr
-    local upst_name = ngx.ctx.upstream_name
-    if not upst_name then
-        --since upstream prematurely closed connection 
-        --while reading response header from upstream
-        --ngx.log(ngx.ERR, 'ngx.ctx.upstream_name is nil')
-        return
-    end
+    local skey = ngx.var.uri
+    skey = string.gsub(skey, '/', '-')
+    skey = string.sub(skey, 2)
 
-    local key = upst_name .. '_' .. upstream_addr
+    local key = skey .. '_' .. upstream_addr
 
     local http_data = {
         status = ngx.var.status,
@@ -271,8 +235,6 @@ function _M.log()
     fill_item(upstream, http_data)
 
     set_dict_data( store_data, statistic_key, data )
-
-    --for logformate
 
 end
 
@@ -309,17 +271,7 @@ function _M.get_statistics()
 
     end
 
-    local upstreams_peers_status = peers_status.get_all_primary_peers_status()
-    if not upstreams_peers_status then
-        ngx.log(ngx.ERR, 'get upstreams_peers_status failed')
-        return ngx.exit(500)
-    end
-
-    local upst_name
-    local ser_addr
-    local upst_ser_table
     local status
-    local upst_data
     local store
 
     for zone, v in pairs( upstreams ) do
@@ -331,8 +283,6 @@ function _M.get_statistics()
                 pretty_upst_peers_data(k1, v1, store['statistic'])
             end
 
-            store['health_status'] =
-                            pretty_upst_peers_status(upstreams_peers_status)
         end
         -- process other zone if any
     end
