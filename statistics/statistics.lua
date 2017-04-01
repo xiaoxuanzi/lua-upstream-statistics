@@ -1,6 +1,6 @@
 local json = require( "cjson" )
-local peers_status = require( "statistic.peers_status" )
-local util = require("statistic.util")
+local peers_status = require( "statistics.peers_status" )
+local util = require("statistics.util")
 
 local statistic_key = 'upstream-statistics'
 local store_data    = ngx.shared.upstream_statistics

@@ -1,4 +1,4 @@
-local util = require( "statistic.util" )
+local util = require( "statistics.util" )
 local upstream  = require("ngx.upstream")
 
 local get_upstreams     = upstream.get_upstreams
