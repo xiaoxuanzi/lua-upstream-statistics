@@ -1,5 +1,4 @@
 local json = require( "cjson" )
-local util = require("statistics.util")
 
 local statistic_key = 'upstream-statistics'
 local store_data    = ngx.shared.upstream_statistics
@@ -16,6 +15,23 @@ function _M.init()
         ngx.log(ngx.ERR, 'init store data failed, err: ' .. err)
     end
 
+end
+
+function split( str, pat )
+
+    local t = {}  -- NOTE: use {n = 0} in Lua-5.0
+    local last_end, s, e = 1, 1, 0
+
+    while s do
+        s, e = string.find( str, pat, last_end )
+        if s then
+            table.insert( t, str:sub( last_end, s-1 ) )
+            last_end = e + 1
+        end
+    end
+
+    table.insert( t, str:sub( last_end ) )
+    return t
 end
 
 local function new_data()
@@ -125,7 +141,7 @@ local function fill_item(upst, data)
     responses['body_bytes_sent'] =
         responses['body_bytes_sent'] + data.body_bytes_sent
 
-    local upst_status_table = util.split(data.upstream_status, ',')
+    local upst_status_table = split(data.upstream_status, ',')
     local upst_resp_servers = #upst_status_table
 
     local upstreams = upst.upstreams
@@ -159,8 +175,8 @@ local function fill_item(upst, data)
         resp_ts = data.upstream_response_time
         resp_len = data.upstream_response_length
     else
-        local upst_resptime_table = util.split(data.upstream_response_time, ',')
-        local upst_resplen_table  = util.split(data.upstream_response_length, ',')
+        local upst_resptime_table = split(data.upstream_response_time, ',')
+        local upst_resplen_table  = split(data.upstream_response_length, ',')
         resp_ts  = tostring(upst_resptime_table[ upst_resp_servers ]):sub(2, -1)
         resp_len = tostring(upst_resplen_table[ upst_resp_servers]):sub(2, -1)
     end
@@ -179,7 +195,7 @@ local function pretty_upst_peers_data(name, data, store)
     local upst_ser_table
     local upst_data
 
-    upst_ser_table = util.split(name, '_')
+    upst_ser_table = split(name, '_')
     upst_name, ser_addr = upst_ser_table[1], upst_ser_table[2]
     upst_data = store[upst_name]
     if not upst_data then
@@ -187,7 +203,7 @@ local function pretty_upst_peers_data(name, data, store)
         store[upst_name] = upst_data
     end
 
-    upst_data[ser_addr]= util.dupdict(data, true)
+    upst_data[ser_addr]= dupdict(data, true)
 
 end
 
