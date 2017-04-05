@@ -100,7 +100,7 @@ get_statistics
 
 **context:** *any*
 
-Get upstream statistics with json format
+Get upstream statistics with json format.
 One typical output is
 ```
 nginx_info: {
