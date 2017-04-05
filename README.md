@@ -78,7 +78,7 @@ This library provides statistics for each backend server in nginx upstreams.
 
 Methods
 =======
-
+init
 -------------
 **syntax:** `statistics.init()`
 
@@ -86,17 +86,21 @@ Methods
 
 Initialize global variables to store upstream statistic 
 
+log
+-------------
 **syntax:** `statistics.log()`
 
 **context:** *log_by_lua&#42;*
 
 Gather upstream data 
 
+get_statistics
+-------------
 **syntax:** `statistics.get_statistics()`
 
 **context:** *content_by_lua&#42;*
 
-Get upstream statistics which is json format
+Get upstream statistics with json format
 
 
 Installation
