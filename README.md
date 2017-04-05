@@ -103,65 +103,65 @@ get_statistics
 Get upstream statistics with json format
 One typical output is
 ```
-{
-	nginx_info: {
-		address: "192.168.46.15",
-		time_iso8601: "2017-04-05T14:39:52+08:00",
-		nginx_version: "1.11.2",
-		timestamp: 1491374392072,
-		pid: 22909
-	},
-	nginx_data: {
-		upstreams: {
-			statistic: {
-				test: {
-					127.0.0.1:12334: {
-						requests: {
-							total: 1,
-							request_length: 380,
-							request_time: 0.2
-						},
-						responses: {
-							3xx: 0,
-							4xx: 0,
-							5xx: 0,
-							total: 1,
-							body_bytes_sent: 37,
-							1xx: 0,
-							2xx: 1
-						},
-						upstreams: {
-							4xx: 0,
-							-xx: 0,
-							1xx: 0,
-							2xx: 1,
-							3xx: 0,
-							upstream_response_length: 26,
-							5xx: 0,
-							total: 1,
-							upstream_response_time: 0.2
-						}
-					}
-				}
-			},
-			health_status: {
-				test: {
-					127.0.0.1:12335: {
-						conns: 0,
-						srv_name: "127.0.0.1:12335",
-						status: "up",
-						upst_name: "test"
-					},
-					127.0.0.1:12334: {
-						conns: 0,
-						srv_name: "127.0.0.1:12334",
-						status: "up",
-						upst_name: "test"
-					}
-				}
-			}
-		}
-	}
+nginx_info: {
+    address: "192.168.46.15",
+    time_iso8601: "2017-04-05T14:39:52+08:00",
+    nginx_version: "1.11.2",
+    timestamp: 1491374392072,
+    pid: 22909
+},
+
+nginx_data: {
+    upstreams: {
+        statistic: {
+            test: {
+                127.0.0.1:12334: {
+                    requests: {
+                        total: 1,
+                        request_length: 380,
+                        request_time: 0.2
+                    },
+                    responses: {
+                        3xx: 0,
+                        4xx: 0,
+                        5xx: 0,
+                        total: 1,
+                        body_bytes_sent: 37,
+                        1xx: 0,
+                        2xx: 1
+                    },
+                    upstreams: {
+                        4xx: 0,
+                        -xx: 0,
+                        1xx: 0,
+                        2xx: 1,
+                        3xx: 0,
+                        upstream_response_length: 26,
+                        5xx: 0,
+                        total: 1,
+                        upstream_response_time: 0.2
+                    }
+                }
+            }
+        },
+
+        health_status: {
+            test: {
+                127.0.0.1:12335: {
+                    conns: 0,
+                    srv_name: "127.0.0.1:12335",
+                    status: "up",
+                    upst_name: "test"
+                },
+                127.0.0.1:12334: {
+                    conns: 0,
+                    srv_name: "127.0.0.1:12334",
+                    status: "up",
+                    upst_name: "test"
+                }
+            }
+        }
+    }
 }
 ```
 
