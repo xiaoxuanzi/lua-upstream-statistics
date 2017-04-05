@@ -13,6 +13,7 @@ function _M.init()
     local succ, err, f = store_data:set(statistic_key, val)
     if not succ then
         ngx.log(ngx.ERR, 'init store data failed, err: ' .. err)
+        error('Init failed. error: ' .. err .. ' aborting!!')
     end
 
 end
