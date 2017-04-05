@@ -34,6 +34,32 @@ function split( str, pat )
     return t
 end
 
+function dupdict( tbl, deep, ctbl )
+
+    local t = {}
+
+    if type(tbl) ~= 'table' then
+        return tbl
+    end
+
+    ctbl = ctbl or {}
+
+    ctbl[tbl] = t
+
+    for k, v in pairs( tbl ) do
+        if deep then
+            if ctbl[v] ~= nil then
+                v = ctbl[v]
+            elseif type( v ) == 'table' then
+                v = dupdict(v, deep, ctbl)
+            end
+        end
+        t[ k ] = v
+    end
+
+    return setmetatable( t, getmetatable(tbl) )
+end
+
 local function new_data()
     return {
         --zones = {},
