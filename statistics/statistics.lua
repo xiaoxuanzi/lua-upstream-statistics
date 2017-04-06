@@ -257,6 +257,10 @@ function _M.log()
     skey = string.gsub(skey, '/', '-')
     skey = string.sub(skey, 2)
 
+    if skey =='favicon.ico' or upstream_addr == '0.0.0.1:11111' then
+        return
+    end
+
     local key = skey .. '_' .. upstream_addr
 
     local http_data = {
@@ -293,12 +297,13 @@ function _M.get_statistics()
             pid = ngx.worker.pid()
         },
 
-        nginx_data = {
-            upstreams = {
-                statistic = {},
-                health_status = {}
+        --nginx_data = {
+        upstream_statistic = {
+            --upstreams = {
+                --statistic = {},
+                --health_status = {}
             }
-        }
+        --}
     }
 
     local upstreams, err = get_dict_data(store_data, statistic_key)
@@ -321,9 +326,11 @@ function _M.get_statistics()
 
         if zone == 'upstreams' then
 
-            store = _ret.nginx_data[zone]
+            --store = _ret.nginx_data[zone]
+            store = _ret.upstream_statistic
             for k1, v1 in pairs( v ) do
-                pretty_upst_peers_data(k1, v1, store['statistic'])
+                pretty_upst_peers_data(k1, v1, store)
+                --pretty_upst_peers_data(k1, v1, store['statistic'])
             end
 
         end
