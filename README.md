@@ -173,7 +173,7 @@ Copy the statistics directory to a location which is in the seaching path of lua
 
 TODO
 ====
-test
+Use Test::Nginx to test
 
 [Back to TOC](#table-of-contents)
 
