@@ -62,12 +62,6 @@ local function new_item()
     -- use in upstream or other
     return {
 
-        requests = {
-            request_time = 0,--the delay of upst server response
-            request_length = 0,
-            total = 0
-        },
-
         responses = {
             ['1xx'] = 0,
             ['2xx'] = 0,
@@ -76,8 +70,20 @@ local function new_item()
             ['5xx'] = 0,
             total_now  = 0,
             total_last = 0,
-            body_bytes_sent = 0,
-            qps = 0
+            qps = 0,
+
+            body_bytes_sent_now  = 0,
+            body_bytes_sent_last = 0,
+            body_bytes_sent_avg  = 0,
+
+            request_time_now  = 0,--the delay of upst server response
+            request_time_last = 0,
+            request_time_avg  = 0,
+
+            request_length_now  = 0,
+            request_length_last = 0,
+            request_length_avg = 0
+
         },
 
         upstreams = {
@@ -89,9 +95,15 @@ local function new_item()
             ['-xx'] = 0,
             total_now  = 0,
             total_last = 0,
-            upstream_response_time = 0,
-            upstream_response_length = 0,
-            qps = 0
+            qps = 0,
+
+            upstream_response_time_now  = 0,
+            upstream_response_time_last = 0,
+            upstream_response_time_avg  = 0,
+
+            upstream_response_length_now = 0,
+            upstream_response_length_last = 0,
+            upstream_response_length_avg = 0,
         },
 
         --[[
@@ -147,19 +159,16 @@ end
 
 local function fill_item(upst, data)
 
-    local requests = upst.requests
-
-    requests['request_time'] = requests[ 'request_time' ] + data.request_time
-    requests['request_length'] =requests['request_length'] + data.request_length
-    requests.total = requests.total + 1
-
     local statuskey = tostring(data.status):sub(1, 1) .. 'xx'
     local responses = upst.responses
 
+    responses['request_time_now'] = responses[ 'request_time_now' ] + data.request_time
+    responses['request_length_now'] = responses['request_length_now'] + data.request_length
+
     responses.total_now = responses.total_now + 1
     responses[statuskey] = responses[statuskey] + 1
-    responses['body_bytes_sent'] =
-        responses['body_bytes_sent'] + data.body_bytes_sent
+    responses['body_bytes_sent_now'] =
+        responses['body_bytes_sent_now'] + data.body_bytes_sent
 
     local upst_status_table = split(data.upstream_status, ',')
     local upst_resp_servers = #upst_status_table
@@ -201,10 +210,10 @@ local function fill_item(upst, data)
         resp_len = tostring(upst_resplen_table[ upst_resp_servers]):sub(2, -1)
     end
 
-    upstreams['upstream_response_time'] =
-                    upstreams['upstream_response_time'] + resp_ts
-    upstreams['upstream_response_length'] =
-                    upstreams['upstream_response_length'] + resp_len
+    upstreams['upstream_response_time_now'] =
+                    upstreams['upstream_response_time_now'] + resp_ts
+    upstreams['upstream_response_length_now'] =
+                    upstreams['upstream_response_length_now'] + resp_len
 
 end
 
@@ -356,16 +365,38 @@ function _M.upstream_qps()
     for k, v in pairs(data.upstreams) do
 
         local upstream = data.upstreams[ k ]
+
+        -- response
         local resp = upstream.responses
         local queries = resp.total_now - resp.total_last
-
         resp.qps = queries / QPS_INTERVAL
         resp.total_last = resp.total_now
 
+        local request_time = resp.request_time_now - resp.request_time_last
+        resp.request_time_avg  = request_time / QPS_INTERVAL
+        resp.request_time_last = resp.request_time_now
+
+        local request_length = resp.request_length_now - resp.request_length_last
+        resp.request_length_avg  = request_length / QPS_INTERVAL
+        resp.request_length_last = resp.request_length_now
+
+        local body_bytes_sent = resp.body_bytes_sent_now - resp.body_bytes_sent_last
+        resp.body_bytes_sent_avg  = body_bytes_sent / QPS_INTERVAL
+        resp.body_bytes_sent_last = resp.body_bytes_sent_now
+
+        -- upstream
         local upst = upstream.upstreams
-        queries  = upst.total_now - upst.total_last
+        local queries  = upst.total_now - upst.total_last
         upst.qps = queries / QPS_INTERVAL
         upst.total_last = upst.total_now
+
+        local resp_time = upst.upstream_response_time_now - upst.upstream_response_time_last
+        upst.upstream_response_time_avg  = resp_time / QPS_INTERVAL
+        upst.upstream_response_time_last = upst.upstream_response_time_now
+
+        local resp_len = upst.upstream_response_length_now - upst.upstream_response_length_last
+        upst.upstream_response_length_avg  = resp_len / QPS_INTERVAL
+        upst.upstream_response_length_last = upst.upstream_response_length_now
 
     end
 
