@@ -1,23 +1,54 @@
 local json = require( "cjson" )
-local peers_status = require( "statistics.peers_status" )
-local util = require("statistics.util")
 
 local statistic_key = 'upstream-statistics'
 local store_data    = ngx.shared.upstream_statistics
 
 local INIT_VAL = 'MRD_INTIT_VAL'
+local QPS_INTERVAL = 5
 
 local _M = {}
 
-function _M.init()
+function split( str, pat )
 
-    local val = INIT_VAL
-    local succ, err, f = store_data:set(statistic_key, val)
-    if not succ then
-        ngx.log(ngx.ERR, 'init store data failed, err: ' .. err)
-        error('Init failed error: ' .. err .. ' aborting!!!')
+    local t = {}  -- NOTE: use {n = 0} in Lua-5.0
+    local last_end, s, e = 1, 1, 0
+
+    while s do
+        s, e = string.find( str, pat, last_end )
+        if s then
+            table.insert( t, str:sub( last_end, s-1 ) )
+            last_end = e + 1
+        end
     end
 
+    table.insert( t, str:sub( last_end ) )
+    return t
+end
+
+function dupdict( tbl, deep, ctbl )
+
+    local t = {}
+
+    if type(tbl) ~= 'table' then
+        return tbl
+    end
+
+    ctbl = ctbl or {}
+
+    ctbl[tbl] = t
+
+    for k, v in pairs( tbl ) do
+        if deep then
+            if ctbl[v] ~= nil then
+                v = ctbl[v]
+            elseif type( v ) == 'table' then
+                v = dupdict(v, deep, ctbl)
+            end
+        end
+        t[ k ] = v
+    end
+
+    return setmetatable( t, getmetatable(tbl) )
 end
 
 local function new_data()
@@ -43,9 +74,10 @@ local function new_item()
             ['3xx'] = 0,
             ['4xx'] = 0,
             ['5xx'] = 0,
-            total = 0,
-
-            body_bytes_sent = 0
+            total_now  = 0,
+            total_last = 0,
+            body_bytes_sent = 0,
+            qps = 0
         },
 
         upstreams = {
@@ -55,9 +87,11 @@ local function new_item()
             ['4xx'] = 0,
             ['5xx'] = 0,
             ['-xx'] = 0,
-            total = 0,
+            total_now  = 0,
+            total_last = 0,
             upstream_response_time = 0,
-            upstream_response_length = 0
+            upstream_response_length = 0,
+            qps = 0
         },
 
         --[[
@@ -122,12 +156,12 @@ local function fill_item(upst, data)
     local statuskey = tostring(data.status):sub(1, 1) .. 'xx'
     local responses = upst.responses
 
-    responses.total = responses.total + 1
+    responses.total_now = responses.total_now + 1
     responses[statuskey] = responses[statuskey] + 1
     responses['body_bytes_sent'] =
         responses['body_bytes_sent'] + data.body_bytes_sent
 
-    local upst_status_table = util.split(data.upstream_status, ',')
+    local upst_status_table = split(data.upstream_status, ',')
     local upst_resp_servers = #upst_status_table
 
     local upstreams = upst.upstreams
@@ -136,7 +170,7 @@ local function fill_item(upst, data)
     local resp_ts 
     local resp_len
 
-    upstreams.total = upstreams.total + 1
+    upstreams.total_now = upstreams.total_now + 1
 
     if upst_resp_servers == 1 then
         upst_status_num = tostring(data.upstream_status):sub(1, 1)
@@ -161,8 +195,8 @@ local function fill_item(upst, data)
         resp_ts = data.upstream_response_time
         resp_len = data.upstream_response_length
     else
-        local upst_resptime_table = util.split(data.upstream_response_time, ',')
-        local upst_resplen_table  = util.split(data.upstream_response_length, ',')
+        local upst_resptime_table = split(data.upstream_response_time, ',')
+        local upst_resplen_table  = split(data.upstream_response_length, ',')
         resp_ts  = tostring(upst_resptime_table[ upst_resp_servers ]):sub(2, -1)
         resp_len = tostring(upst_resplen_table[ upst_resp_servers]):sub(2, -1)
     end
@@ -174,53 +208,17 @@ local function fill_item(upst, data)
 
 end
 
-local function  pretty_upst_peers_status( upstreams_peers_status )
+local function pretty_upst_peers_data(upst_name, ser_addr, data, store)
 
-    local upst_name
-    local ser_addr
-    local upst_ser_table
-    local health_status = {}
-    local status
-
-    for k, v in pairs( upstreams_peers_status ) do
-
-        upst_ser_table = util.split(k, '_')
-        upst_name, ser_addr = upst_ser_table[1], upst_ser_table[2]
-        status = health_status[ upst_name ]
-        if not status then
-            status = {}
-            health_status[ upst_name ] = status
-        end
-        status[ser_addr] = util.dupdict(v, true)
-
-        if status[ser_addr]['down'] then
-            status[ser_addr]['status'] = 'down'
-        else
-            status[ser_addr]['status'] = 'up'
-        end
-
-    end
-
-    return health_status
-
-end
-
-local function pretty_upst_peers_data(name, data, store)
-
-    local upst_name
-    local ser_addr
-    local upst_ser_table
     local upst_data
 
-    upst_ser_table = util.split(name, '_')
-    upst_name, ser_addr = upst_ser_table[1], upst_ser_table[2]
     upst_data = store[upst_name]
     if not upst_data then
         upst_data = {}
         store[upst_name] = upst_data
     end
 
-    upst_data[ser_addr]= util.dupdict(data, true)
+    upst_data[ser_addr]= dupdict(data, true)
 
 end
 
@@ -243,11 +241,12 @@ function _M.log()
     end
 
     local upstream_addr = ngx.var.upstream_addr
+
     local upst_name = ngx.ctx.upstream_name
     if not upst_name then
-        --since upstream prematurely closed connection 
+        --since upstream prematurely closed connection
         --while reading response header from upstream
-        --ngx.log(ngx.ERR, 'ngx.ctx.upstream_name is nil')
+        ngx.log(ngx.ERR, 'ngx.ctx.upstream_name is nil')
         return
     end
 
@@ -273,8 +272,6 @@ function _M.log()
 
     set_dict_data( store_data, statistic_key, data )
 
-    --for logformate
-
 end
 
 function _M.get_statistics()
@@ -289,12 +286,13 @@ function _M.get_statistics()
             pid = ngx.worker.pid()
         },
 
-        nginx_data = {
-            upstreams = {
-                statistic = {},
-                health_status = {}
+        --nginx_data = {
+        upstream_statistics = {
+            --upstreams = {
+                --statistic = {},
+                --health_status = {}
             }
-        }
+        --}
     }
 
     local upstreams, err = get_dict_data(store_data, statistic_key)
@@ -310,26 +308,28 @@ function _M.get_statistics()
 
     end
 
-    local upstreams_peers_status = peers_status.get_all_primary_peers_status()
-    if not upstreams_peers_status then
-        ngx.log(ngx.ERR, 'get upstreams_peers_status failed')
-        return ngx.exit(500)
-    end
-
+    local upstream_name = ngx.var.arg_name
     local status
     local store
 
     for zone, v in pairs( upstreams ) do
 
         if zone == 'upstreams' then
-
-            store = _ret.nginx_data[zone]
+            --store = _ret.nginx_data[zone]
+            store = _ret.upstream_statistics
             for k1, v1 in pairs( v ) do
-                pretty_upst_peers_data(k1, v1, store['statistic'])
+                upst_ser_table = split(k1, '_')
+                upst_name, ser_addr = upst_ser_table[1], upst_ser_table[2]
+                if ngx.var.arg_name then
+
+                    if ngx.var.arg_name == upst_name then
+                        pretty_upst_peers_data(upst_name, ser_addr, v1, store)
+                    end
+                else
+                    pretty_upst_peers_data(upst_name, ser_addr, v1, store)
+                end
             end
 
-            store['health_status'] =
-                            pretty_upst_peers_status(upstreams_peers_status)
         end
         -- process other zone if any
     end
@@ -338,6 +338,74 @@ function _M.get_statistics()
     ngx.status = ngx.HTTP_OK
     ngx.print( ret )
     ngx.exit(ngx.HTTP_OK)
+end
+
+function _M.upstream_qps()
+
+    local data, err = get_dict_data( store_data, statistic_key )
+    if not data then
+        ngx.log(ngx.ERR, 'get dict data failed, err: '.. err)
+        return
+    end
+
+    if data == INIT_VAL then
+        ngx.log(ngx.ERR, 'there is no data yet')
+        return
+    end
+
+    for k, v in pairs(data.upstreams) do
+
+        local upstream = data.upstreams[ k ]
+        local resp = upstream.responses
+        local queries = resp.total_now - resp.total_last
+
+        resp.qps = queries / QPS_INTERVAL
+        resp.total_last = resp.total_now
+
+        local upst = upstream.upstreams
+        queries  = upst.total_now - upst.total_last
+        upst.qps = queries / QPS_INTERVAL
+        upst.total_last = upst.total_now
+
+    end
+
+    set_dict_data( store_data, statistic_key, data )
+
+end
+
+local function timer_work( interval, worker, startafter )
+    local timer_work
+
+    timer_work = function (premature)
+        if not premature then
+            local rst, err_msg = pcall( worker )
+            if not rst then
+                ngx.log(ngx.ERR, 'timer work:', err_msg)
+            end
+            ngx.timer.at( interval, timer_work )
+        end
+    end
+
+    startafter = startafter or interval
+
+    ngx.timer.at( startafter, timer_work )
+end
+
+function _M.init()
+
+    local val = INIT_VAL
+    local succ, err, f = store_data:set(statistic_key, val)
+    if not succ then
+        ngx.log(ngx.ERR, 'init store data failed, err: ' .. err)
+        error('Init failed. error: ' .. err .. ' aborting!!')
+    end
+
+end
+
+function _M.init_works()
+
+    timer_work(QPS_INTERVAL, _M.upstream_qps)
+
 end
 
 return _M
