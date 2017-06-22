@@ -32,15 +32,19 @@ http {
     upstream test {
         server 127.0.0.1:12334;
         server 127.0.0.1:12335;
-        server 127.0.0.1:12336 backup;
     }
     
     lua_shared_dict upstream_statistics 10m;
-    
+
     init_by_lua_block{
         local statistics = require("statistics.statistics")
         statistics.init()
-    }   
+    }
+
+    init_worker_by_lua_block{
+        local statistics = require("statistics.statistics")
+        statistics.init_works()
+    }
 
     log_by_lua_block{
         local statistic = require("statistics.statistics")
@@ -49,7 +53,7 @@ http {
 
     server {
         ...
-        location /upstream_statistics {
+        location =/statistics {
             default_type 'text/html';
             content_by_lua_block{
                 local st = require("statistics.statistics")
@@ -57,7 +61,7 @@ http {
             }
         }
 
-       location /get {
+       location /test {
             default_type 'text/html';
             access_by_lua_block{
                 ngx.ctx.upstream_name = 'test'
@@ -101,68 +105,60 @@ get_statistics
 **context:** *any*
 
 Get upstream statistics with json format.
-One typical output is
+One typical output is:
 ```
-nginx_info: {
-    address: "192.168.46.15",
-    time_iso8601: "2017-04-05T14:39:52+08:00",
-    nginx_version: "1.11.2",
-    timestamp: 1491374392072,
-    pid: 22909
-},
-
-nginx_data: {
-    upstreams: {
-        statistic: {
-            test: {
-                127.0.0.1:12334: {
-                    requests: {
-                        total: 1,
-                        request_length: 380,
-                        request_time: 0.2
-                    },
-                    responses: {
-                        3xx: 0,
-                        4xx: 0,
-                        5xx: 0,
-                        total: 1,
-                        body_bytes_sent: 37,
-                        1xx: 0,
-                        2xx: 1
-                    },
-                    upstreams: {
-                        4xx: 0,
-                        -xx: 0,
-                        1xx: 0,
-                        2xx: 1,
-                        3xx: 0,
-                        upstream_response_length: 26,
-                        5xx: 0,
-                        total: 1,
-                        upstream_response_time: 0.2
-                    }
+{
+    nginx_info: {
+        address: "10.16.58.117",
+        time_iso8601: "2017-06-22T09:30:25+08:00",
+        nginx_version: "1.11.2",
+        timestamp: 1498095025252,
+        pid: 25625
+    },
+    upstream_statistics: {
+        test: {
+            10.16.58.117:7777: {
+                responses: {
+                    1xx: 0,
+                    2xx: 3,
+                    3xx: 0,
+                    4xx: 0,
+                    5xx: 0,
+                    total_now: 3,
+                    total_last: 3,
+                    qps: 0,
+                    body_bytes_sent_now: 30,
+                    body_bytes_sent_last: 30,
+                    body_bytes_sent_avg: 0,
+                    request_length_now: 1236,
+                    request_length_last: 1236,
+                    request_length_avg: 0,
+                    request_time_now: 3.005,
+                    request_time_last: 3.005
+                    request_time_avg: 0,
                 }
-            }
-        },
-
-        health_status: {
-            test: {
-                127.0.0.1:12335: {
-                    conns: 0,
-                    srv_name: "127.0.0.1:12335",
-                    status: "up",
-                    upst_name: "test"
-                },
-                127.0.0.1:12334: {
-                    conns: 0,
-                    srv_name: "127.0.0.1:12334",
-                    status: "up",
-                    upst_name: "test"
+                upstreams: {
+                    -xx: 0,
+                    1xx: 0,
+                    2xx: 3,
+                    3xx: 0
+                    4xx: 0,
+                    5xx: 0,
+                    total_now: 3,
+                    total_last: 3,
+                    qps: 0,
+                    upstream_response_length_now: 30,
+                    upstream_response_length_last: 30,
+                    upstream_response_length_avg: 0,
+                    upstream_response_time_last: 3.005,
+                    upstream_response_time_now: 3.005,
+                    upstream_response_time_avg: 0,
                 }
             }
         }
     }
 }
+
 ```
 
 Installation
