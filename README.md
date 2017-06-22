@@ -109,7 +109,7 @@ One typical output is:
 ```
 {
     nginx_info: {
-        address: "10.16.58.117",
+        address: "192.168.46.110",
         time_iso8601: "2017-06-22T09:30:25+08:00",
         nginx_version: "1.11.2",
         timestamp: 1498095025252,
@@ -117,7 +117,7 @@ One typical output is:
     },
     upstream_statistics: {
         test: {
-            10.16.58.117:7777: {
+            127.0.0.1:12334: {
                 responses: {
                     1xx: 0,
                     2xx: 3,
