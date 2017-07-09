@@ -1,10 +1,9 @@
 local json = require( "cjson" )
+local shared_dict = ngx.shared.upstream_statistics
 
-local statistic_key = 'upstream-statistics'
-local store_data    = ngx.shared.upstream_statistics
-
-local INIT_VAL = 'MRD_INTIT_VAL'
-local QPS_INTERVAL = 5
+local QPS_INTERVAL = 10
+local SYMBOL_UPST = '='
+local SYMBOL_SERVER = '*'
 
 local _M = {}
 
@@ -25,209 +24,84 @@ function split( str, pat )
     return t
 end
 
-function dupdict( tbl, deep, ctbl )
+local function startwith(str, start)
 
-    local t = {}
+    return string.sub(str, 1, string.len(start)) == start
+end
 
-    if type(tbl) ~= 'table' then
-        return tbl
-    end
+local function trim (s)
+    return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
+end
 
-    ctbl = ctbl or {}
+local function incr(dict, k, n)
 
-    ctbl[tbl] = t
+    local v, err
 
-    for k, v in pairs( tbl ) do
-        if deep then
-            if ctbl[v] ~= nil then
-                v = ctbl[v]
-            elseif type( v ) == 'table' then
-                v = dupdict(v, deep, ctbl)
-            end
+    n = tonumber(n) or 0
+
+    v, err = dict:incr(k, n)
+
+    if err then
+        dict:add( k, 0 )
+        v, err = dict:incr( k, n )
+        if err then
+            ngx.log( ngx.ERR, "Fail to incr: ", k, " err=", err )
         end
-        t[ k ] = v
     end
 
-    return setmetatable( t, getmetatable(tbl) )
+    return v, err
 end
 
-local function new_data()
-    return {
-        --zones = {},
-        upstreams = {}
-    }
+local function get(dict, k)
+
+    local v, err
+
+    v, err = dict:get(k)
+
+    if err then
+        ngx.log( ngx.ERR, "Fail to get: ", k, " err=", err )
+    end
+
+    return v
 end
 
-local function new_item()
-    -- use in upstream or other
-    return {
+local function set(dict, k, v)
 
-        responses = {
-            ['1xx'] = 0,
-            ['2xx'] = 0,
-            ['3xx'] = 0,
-            ['4xx'] = 0,
-            ['5xx'] = 0,
-            total_now  = 0,
-            total_last = 0,
-            qps = 0,
+    local succ, err = dict:set(k, v)
 
-            body_bytes_sent_now  = 0,
-            body_bytes_sent_last = 0,
-            body_bytes_sent_avg  = 0,
+    if err then
+        ngx.log(ngx.ERR, "Fail to set: ", k, " err: ", err)
+    end
 
-            request_time_now  = 0,--the delay of upst server response
-            request_time_last = 0,
-            request_time_avg  = 0,
-
-            request_length_now  = 0,
-            request_length_last = 0,
-            request_length_avg = 0
-
-        },
-
-        upstreams = {
-            ['1xx'] = 0,
-            ['2xx'] = 0,
-            ['3xx'] = 0,
-            ['4xx'] = 0,
-            ['5xx'] = 0,
-            ['-xx'] = 0,
-            total_now  = 0,
-            total_last = 0,
-            qps = 0,
-
-            upstream_response_time_now  = 0,
-            upstream_response_time_last = 0,
-            upstream_response_time_avg  = 0,
-
-            upstream_response_length_now = 0,
-            upstream_response_length_last = 0,
-            upstream_response_length_avg = 0,
-        },
-
-        --[[
-        --status = {
-        --  dowm = true
-        --  ups_name = 'test'
-        --  conns = 1234
-        --  accessed = ts
-        --  checked = ts
-        --}
-        --]]
-
-    }
 end
 
-local function set_dict_data( dict, key, data )
+local function set_avg(dict, k_avg, v_now, v_last)
 
-    local err, json_data = pcall(json.encode, data )
-    if not err then
-        ngx.log(ngx.ERR, 'set dict data faled, since json decode, err: ', err)
+    local v_avg
+    if v_now == nil or v_last == nil then
+        ngx.log(ngx.ERR, 'Fail to set_avg since values has nil, key: ', k_avg)
         return
     end
 
-    local succ, err, f = dict:set(key, json_data )
-    if not succ then
-        ngx.log(ngx.ERR, 'set dict data failed, err: ' .. err)
-    end
+    v_avg = (v_now - v_last) / QPS_INTERVAL
+    set(shared_dict, k_avg, v_avg)
 
 end
 
-local function get_dict_data( dict, key )
+local function list_upst_ip_port_keys()
 
-    local val, err = dict:get( key )
+    local shared_dict_keys = shared_dict:get_keys()
 
-    if not val then
-        return nil, err
+    local all_upst_ip_port_keys = {}
+    for _, value in pairs(shared_dict_keys) do
+        local key =  split(value, SYMBOL_SERVER)[1]
+
+        if all_upst_ip_port_keys[key] == nil then
+            all_upst_ip_port_keys[key] = true
+        end
     end
 
-    if val == INIT_VAL then
-        return val, nil
-    end
-
-    local err, data = pcall( json.decode, val )
-    if not err then
-        ngx.log(ngx.ERR, 'get statistic failed, err : ' .. err)
-
-        return nil, err
-    end
-
-    return data, nil
-
-end
-
-local function fill_item(upst, data)
-
-    local statuskey = tostring(data.status):sub(1, 1) .. 'xx'
-    local responses = upst.responses
-
-    responses['request_time_now'] = responses[ 'request_time_now' ] + data.request_time
-    responses['request_length_now'] = responses['request_length_now'] + data.request_length
-
-    responses.total_now = responses.total_now + 1
-    responses[statuskey] = responses[statuskey] + 1
-    responses['body_bytes_sent_now'] =
-        responses['body_bytes_sent_now'] + data.body_bytes_sent
-
-    local upst_status_table = split(data.upstream_status, ',')
-    local upst_resp_servers = #upst_status_table
-
-    local upstreams = upst.upstreams
-    local upst_status_num 
-    local upst_statuskey
-    local resp_ts 
-    local resp_len
-
-    upstreams.total_now = upstreams.total_now + 1
-
-    if upst_resp_servers == 1 then
-        upst_status_num = tostring(data.upstream_status):sub(1, 1)
-    else
-        upst_status_num = tostring(upst_status_table[ upst_resp_servers ]):sub(2, 2)
-    end
-
-    upst_statuskey = upst_status_num .. 'xx'
-    upstreams[upst_statuskey] = upstreams[upst_statuskey] + 1
-
-    if upst_statuskey == '-xx' then
-        upstreams['-xx'] = upstreams['-xx'] + 1
-        --ngx.log(ngx.ERR, 'status : ', data.status)
-        return
-    end
-
-    if upst_status_num ~= '2' then
-        return
-    end
-
-    if upst_resp_servers == 1 then
-        resp_ts = data.upstream_response_time
-        resp_len = data.upstream_response_length
-    else
-        local upst_resptime_table = split(data.upstream_response_time, ',')
-        local upst_resplen_table  = split(data.upstream_response_length, ',')
-        resp_ts  = tostring(upst_resptime_table[ upst_resp_servers ]):sub(2, -1)
-        resp_len = tostring(upst_resplen_table[ upst_resp_servers]):sub(2, -1)
-    end
-
-    upstreams['upstream_response_time_now'] =
-                    upstreams['upstream_response_time_now'] + resp_ts
-    upstreams['upstream_response_length_now'] =
-                    upstreams['upstream_response_length_now'] + resp_len
-
-end
-
-local function pretty_upst_peers_data(upst_name, ser_addr, data, store)
-
-    local upst_data
-
-    upst_data = store[upst_name]
-    if not upst_data then
-        upst_data = {}
-        store[upst_name] = upst_data
-    end
-
-    upst_data[ser_addr]= dupdict(data, true)
+    return all_upst_ip_port_keys
 
 end
 
@@ -239,53 +113,108 @@ function _M.log()
         return
     end
 
-    local data, err = get_dict_data( store_data, statistic_key )
-    if not data then
-        ngx.log(ngx.ERR, 'get dict data failed, err: '.. err)
-        return
-    end
-
-    if data == INIT_VAL then
-        data = new_data()
-    end
-
-    local upstream_addr = ngx.var.upstream_addr
-
     local upst_name = ngx.ctx.upstream_name
     if not upst_name then
         --since upstream prematurely closed connection
         --while reading response header from upstream
-        ngx.log(ngx.ERR, 'ngx.ctx.upstream_name is nil')
+        --ngx.log(ngx.ERR, 'ngx.ctx.upstream_name is nil')
         return
     end
 
-    local key = upst_name .. '_' .. upstream_addr
+    -- upstream_addr contains more than 1 addr,
+    -- only use one this time
+    local upst_addr_table = split(ngx.var.upstream_addr, ',')
+    local upstream_addr = upst_addr_table[#upst_addr_table]
+    if #upst_addr_table > 1 then
+        upstream_addr = trim( upstream_addr )
+    end
+    local prefix_key = upst_name .. SYMBOL_UPST .. upstream_addr .. SYMBOL_SERVER
 
-    local http_data = {
-        status = ngx.var.status,
-        body_bytes_sent = ngx.var.body_bytes_sent,
-        request_length  = ngx.var.request_length,
-        request_time    = ngx.var.request_time,
-        upstream_status = ngx.var.upstream_status,
-        upstream_response_time   = ngx.var.upstream_response_time,
-        upstream_response_length = ngx.var.upstream_response_length,
-    }
+    local resp_status = tostring(ngx.var.status):sub(1, 1) .. 'xx'
+    incr(shared_dict, prefix_key .. 'req_' .. resp_status, 1)
+    incr(shared_dict, prefix_key .. 'req_total', 1)
+    --incr(shared_dict, prefix_key .. 'req_time', ngx.var.request_time)
+    --incr(shared_dict, prefix_key .. 'req_len', ngx.var.request_length)
+    --incr(shared_dict, prefix_key .. 'req_body_sent', ngx.var.body_bytes_sent)
 
-    if not data.upstreams[ key ] then
-        data.upstreams[ key ] = new_item()
+    local upstream_status_num
+    local upst_status_table = split(ngx.var.upstream_status, ',')
+    local upst_resp_num = #upst_status_table
+    if upst_resp_num == 1 then
+        upst_status_num = tostring(ngx.var.upstream_status):sub(1, 1)
+    else
+        upst_status_num = tostring(upst_status_table[upst_resp_num]):sub(2, 2)
     end
 
-    local upstream = data.upstreams[ key ]
+    local upstream_status = upst_status_num .. 'xx'
+    incr(shared_dict, prefix_key .. 'upst_' .. upstream_status, 1)
+    incr(shared_dict, prefix_key .. 'upst_total', 1)
 
-    fill_item(upstream, http_data)
+    if upst_status_num ~= '2' then
+        return
+    end
 
-    set_dict_data( store_data, statistic_key, data )
+    local resp_ts
+    local resp_len
+    if upst_resp_num == 1 then
+        resp_ts  = ngx.var.upstream_response_time
+        resp_len = ngx.var.upstream_response_length
+    else
+        local upst_resptime_table = split(ngx.var.upstream_response_time, ',')
+        local upst_resplen_table  = split(ngx.var.upstream_response_length, ',')
+        resp_ts  = tostring(upst_resptime_table[ upst_resp_num ]):sub(2, -1)
+        resp_len = tostring(upst_resplen_table[ upst_resp_num]):sub(2, -1)
+    end
+
+    incr(shared_dict, prefix_key .. 'upst_resp_time', resp_ts)
+    --incr(shared_dict, prefix_key .. 'upst_resp_len',  resp_len)
+
+end
+
+function _M.upstream_qps()
+
+    local elements = {
+        'req_total',
+        --'req_time',
+        --'req_len',
+        --'req_body_sent',
+
+        'upst_total',
+        'upst_resp_time',
+        --'upst_resp_len',
+    }
+
+    local upst_ip_port_keys = list_upst_ip_port_keys()
+    local k_now, k_last, k_avg
+    local v_now, v_last, v_avg
+    local err
+    for upst_ip, _ in pairs(upst_ip_port_keys) do
+
+        for _, postfix in pairs(elements) do
+            k_now  = upst_ip .. SYMBOL_SERVER .. postfix
+            k_last = upst_ip .. SYMBOL_SERVER .. postfix.. '_last'
+            k_avg  = upst_ip .. SYMBOL_SERVER .. postfix.. '_avg'
+
+            v_last = get(shared_dict, k_last)
+            v_now  = get(shared_dict, k_now)
+	    if v_now ~= nil then
+	        if v_last == nil then
+		    set(shared_dict, k_last, v_now)
+		    v_last = v_now
+		end
+
+		set_avg(shared_dict, k_avg, v_now, v_last)
+
+		set(shared_dict, k_last, v_now)
+	   end
+        end
+    end
 
 end
 
 function _M.get_statistics()
 
-    local _ret = {
+    local statistics = {
 
         nginx_info = {
             nginx_version = ngx.var.nginx_version,
@@ -295,112 +224,48 @@ function _M.get_statistics()
             pid = ngx.worker.pid()
         },
 
-        --nginx_data = {
-        upstream_statistics = {
-            --upstreams = {
-                --statistic = {},
-                --health_status = {}
-            }
-        --}
+        upstreams = {}
     }
 
-    local upstreams, err = get_dict_data(store_data, statistic_key)
-    if not upstreams then
-        ngx.log(ngx.ERR, 'get statistic failed, err: ' .. err)
-        ngx.exit(500)
-    end
+    local upst_ip_port_keys = list_upst_ip_port_keys()
+    local shared_dict_keys = shared_dict:get_keys()
 
-    if upstreams == INIT_VAL then
+    local upst_name
+    local item
+    local server
+    local ret
+    for _, value in pairs(shared_dict_keys) do
+        ret = split(value, SYMBOL_UPST)
+        upst_name = ret[1]
+        ret = split(ret[2], SYMBOL_SERVER)
+        server  = ret[1]
+        element = ret[2]
 
-        ngx.print( 'There is no data yet, please try later!' )
-        ngx.exit(ngx.HTTP_OK)
 
-    end
-
-    local upstream_name = ngx.var.arg_name
-    local status
-    local store
-
-    for zone, v in pairs( upstreams ) do
-
-        if zone == 'upstreams' then
-            --store = _ret.nginx_data[zone]
-            store = _ret.upstream_statistics
-            for k1, v1 in pairs( v ) do
-                upst_ser_table = split(k1, '_')
-                upst_name, ser_addr = upst_ser_table[1], upst_ser_table[2]
-                if ngx.var.arg_name then
-
-                    if ngx.var.arg_name == upst_name then
-                        pretty_upst_peers_data(upst_name, ser_addr, v1, store)
-                    end
-                else
-                    pretty_upst_peers_data(upst_name, ser_addr, v1, store)
-                end
-            end
-
+        upst_data = statistics['upstreams'][upst_name]
+        if not upst_data then
+            upst_data = {}
+            statistics['upstreams'][upst_name] = upst_data
         end
-        -- process other zone if any
+
+        if not upst_data[server] then
+            upst_data[server] = {
+                response = {},
+                upstream = {}
+            }
+        end
+
+        if startwith(element, 'req') then
+            upst_data[server]['response'][element] = get(shared_dict, value)
+        else
+            upst_data[server]['upstream'][element] = get(shared_dict, value)
+        end
     end
 
-    local ret = json.encode( _ret )
+    local ret = json.encode( statistics )
     ngx.status = ngx.HTTP_OK
     ngx.print( ret )
     ngx.exit(ngx.HTTP_OK)
-end
-
-function _M.upstream_qps()
-
-    local data, err = get_dict_data( store_data, statistic_key )
-    if not data then
-        ngx.log(ngx.ERR, 'get dict data failed, err: '.. err)
-        return
-    end
-
-    if data == INIT_VAL then
-        ngx.log(ngx.ERR, 'there is no data yet')
-        return
-    end
-
-    for k, v in pairs(data.upstreams) do
-
-        local upstream = data.upstreams[ k ]
-
-        -- response
-        local resp = upstream.responses
-        local queries = resp.total_now - resp.total_last
-        resp.qps = queries / QPS_INTERVAL
-        resp.total_last = resp.total_now
-
-        local request_time = resp.request_time_now - resp.request_time_last
-        resp.request_time_avg  = request_time / QPS_INTERVAL
-        resp.request_time_last = resp.request_time_now
-
-        local request_length = resp.request_length_now - resp.request_length_last
-        resp.request_length_avg  = request_length / QPS_INTERVAL
-        resp.request_length_last = resp.request_length_now
-
-        local body_bytes_sent = resp.body_bytes_sent_now - resp.body_bytes_sent_last
-        resp.body_bytes_sent_avg  = body_bytes_sent / QPS_INTERVAL
-        resp.body_bytes_sent_last = resp.body_bytes_sent_now
-
-        -- upstream
-        local upst = upstream.upstreams
-        local queries  = upst.total_now - upst.total_last
-        upst.qps = queries / QPS_INTERVAL
-        upst.total_last = upst.total_now
-
-        local resp_time = upst.upstream_response_time_now - upst.upstream_response_time_last
-        upst.upstream_response_time_avg  = resp_time / QPS_INTERVAL
-        upst.upstream_response_time_last = upst.upstream_response_time_now
-
-        local resp_len = upst.upstream_response_length_now - upst.upstream_response_length_last
-        upst.upstream_response_length_avg  = resp_len / QPS_INTERVAL
-        upst.upstream_response_length_last = upst.upstream_response_length_now
-
-    end
-
-    set_dict_data( store_data, statistic_key, data )
 
 end
 
@@ -422,20 +287,11 @@ local function timer_work( interval, worker, startafter )
     ngx.timer.at( startafter, timer_work )
 end
 
-function _M.init()
-
-    local val = INIT_VAL
-    local succ, err, f = store_data:set(statistic_key, val)
-    if not succ then
-        ngx.log(ngx.ERR, 'init store data failed, err: ' .. err)
-        error('Init failed. error: ' .. err .. ' aborting!!')
-    end
-
-end
-
 function _M.init_works()
 
-    timer_work(QPS_INTERVAL, _M.upstream_qps)
+    if ngx.worker.id() == 0 then
+        timer_work(QPS_INTERVAL, _M.upstream_qps)
+    end
 
 end
 

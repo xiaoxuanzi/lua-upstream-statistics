@@ -20,7 +20,7 @@ Table of Contents
 Status
 ======
 
-This library  is already production ready.
+This library  is already production ready. Consumption of CPU is less than 5%  in the production environment.
 
 Synopsis
 ========
@@ -35,11 +35,6 @@ http {
     }
     
     lua_shared_dict upstream_statistics 10m;
-
-    init_by_lua_block{
-        local statistics = require("statistics.statistics")
-        statistics.init()
-    }
 
     init_worker_by_lua_block{
         local statistics = require("statistics.statistics")
@@ -82,14 +77,6 @@ This library provides statistics for each backend server in nginx upstreams.
 
 Methods
 =======
-init
--------------
-**syntax:** `statistics.init()`
-
-**context:** *init_by_lua&#42;*
-
-Initialize global variables to store upstream statistic 
-
 log
 -------------
 **syntax:** `statistics.log()`
@@ -115,46 +102,26 @@ One typical output is:
         timestamp: 1498095025252,
         pid: 25625
     },
-    upstream_statistics: {
+    upstreams: {
         test: {
             127.0.0.1:12334: {
-                responses: {
-                    1xx: 0,
-                    2xx: 3,
-                    3xx: 0,
-                    4xx: 0,
-                    5xx: 0,
-                    total_now: 3,
-                    total_last: 3,
-                    qps: 0,
-                    body_bytes_sent_now: 30,
-                    body_bytes_sent_last: 30,
-                    body_bytes_sent_avg: 0,
-                    request_length_now: 1236,
-                    request_length_last: 1236,
-                    request_length_avg: 0,
-                    request_time_now: 3.005,
-                    request_time_last: 3.005
-                    request_time_avg: 0,
-                }
-                upstreams: {
-                    -xx: 0,
-                    1xx: 0,
-                    2xx: 3,
-                    3xx: 0
-                    4xx: 0,
-                    5xx: 0,
-                    total_now: 3,
-                    total_last: 3,
-                    qps: 0,
-                    upstream_response_length_now: 30,
-                    upstream_response_length_last: 30,
-                    upstream_response_length_avg: 0,
-                    upstream_response_time_last: 3.005,
-                    upstream_response_time_now: 3.005,
-                    upstream_response_time_avg: 0,
+                response: {
+                    req_total_avg: 18.3, //This is QPS
+                    req_total: 1144546,
+                    req_2xx: 1144546,
+                    req_total_last: 1144496
+                },
+                upstream: {
+                    upst_resp_time: 5786.1539999783,
+                    upst_total_avg: 18.3, //This is QPS
+                    upst_resp_time_avg: 0.072599999998147,
+                    upst_total_last: 1144496,
+                    upst_2xx: 1144546,
+                    upst_total: 1144546,
+                    upst_resp_time_last: 5785.9499999783
                 }
             }
+
         }
     }
 }
